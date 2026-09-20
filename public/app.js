@@ -1,10 +1,84 @@
-const $=s=>document.querySelector(s);async function api(u,o={}){const r=await fetch(u,o),d=await r.json();if(!r.ok)throw Error(d.error||"Something went wrong");return d}
-async function news(){try{let n=await api("/api/news");$("#newsGrid").innerHTML=n.map(x=>`<article class="card"><p class="eyebrow">${new Date(x.published_at).toLocaleDateString()}</p><h3>${x.title}</h3><p>${x.body}</p></article>`).join("")}catch{}}
-$("#registerForm").onsubmit=async e=>{e.preventDefault();try{let r=await api("/api/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});$("#regMsg").textContent=`Account created. Username: ${r.username}`;e.target.reset()}catch(x){$("#regMsg").textContent=x.message}};
-$("#loginForm").onsubmit=async e=>{e.preventDefault();try{let r=await api("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});$("#portal").classList.remove("hidden");$("#welcome").textContent=`Welcome, ${r.student.name} (${r.student.admno}@makuenigirls.sc.ke)`;loadSubs()}catch(x){$("#loginMsg").textContent=x.message}};
-async function loadSubs(){try{let a=await api("/api/submissions");$("#submissionList").innerHTML=a.length?a.map(x=>`<div class="submission"><b>${x.subject}</b> — ${x.title}<br><small>${x.originalName} • ${new Date(x.submittedAt).toLocaleString()}</small><br><a href="/api/submissions/${x.id}/download">Download</a></div>`).join(""):"<p>No submissions yet.</p>"}catch{}}
-$("#submissionForm").onsubmit=async e=>{e.preventDefault();try{let r=await api("/api/submissions",{method:"POST",body:new FormData(e.target)});$("#subMsg").textContent=r.message;e.target.reset();loadSubs()}catch(x){$("#subMsg").textContent=x.message}};
-$("#teacherLoginForm").onsubmit=async e=>{e.preventDefault();try{let r=await api("/api/teacher/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});$("#teacherLoginWrap").classList.add("hidden");$("#teacherPortal").classList.remove("hidden");$("#teacherWelcome").textContent=`Welcome, ${r.teacher.name}`;loadTeacher()}catch(x){$("#teacherLoginMsg").textContent=x.message}};
-async function loadTeacher(){try{let s=await api("/api/teacher/students");$("#studentsList").innerHTML=s.length?s.map(x=>`<div class="submission"><b>${x.admno}</b> — ${x.name}<br><small>${x.className||""} • ${x.email||""}</small></div>`).join(""):"<p>No students registered.</p>";let a=await api("/api/teacher/submissions");$("#teacherSubmissions").innerHTML=a.length?a.map(x=>`<div class="submission"><b>${x.subject}</b> — ${x.title}<br>${x.name} (${x.admno}) • ${x.originalName}<br><a href="/api/teacher/submissions/${x.id}/download">Download work</a></div>`).join(""):"<p>No submissions.</p>"}catch{}}
-$("#newsForm").onsubmit=async e=>{e.preventDefault();try{let r=await api("/api/teacher/news",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});$("#newsMsg").textContent=r.message;e.target.reset();news()}catch(x){$("#newsMsg").textContent=x.message}};
-$("#logout").onclick=async()=>{await api("/api/logout",{method:"POST"});location.reload()};$("#teacherLogout").onclick=async()=>{await api("/api/logout",{method:"POST"});location.reload()};news();api("/api/me").then(r=>{$("#portal").classList.remove("hidden");$("#welcome").textContent=`Welcome, ${r.student.name}`;loadSubs()}).catch(()=>{});
+const SUPABASE_URL="https://naajrbseyanokuxcqqvn.supabase.co";
+const SUPABASE_KEY="sb_publishable_Az9z2B58wLqIj5-Q3SztBg_lBQKIc2i";
+const db=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+const $=s=>document.querySelector(s);
+
+function msg(id,text){const el=$(id);if(el)el.textContent=text;}
+function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+
+async function news(){
+  const {data,error}=await db.from("news").select("id,title,body,published_at").order("published_at",{ascending:false});
+  if(error)return;
+  $("#newsGrid").innerHTML=(data||[]).map(x=>`<article class="card"><p class="eyebrow">${new Date(x.published_at).toLocaleDateString()}</p><h3>${esc(x.title)}</h3><p>${esc(x.body)}</p></article>`).join("")||"<p>No news published yet.</p>";
+}
+
+function usernameFromAdmno(admno){return `${String(admno).trim()}@makuenigirls.sc.ke`.toLowerCase();}
+
+async function loadStudent(){
+  const {data:{user}}=await db.auth.getUser();
+  if(!user)return;
+  const {data:student}=await db.from("students").select("*").eq("id",user.id).single();
+  if(!student)return;
+  $("#portal").classList.remove("hidden");
+  $("#welcome").textContent=`Welcome, ${student.full_name} (${user.email})`;
+  await loadSubs(student.id);
+}
+
+async function loadSubs(studentId){
+  const {data,error}=await db.from("submissions").select("id,subject,title,original_filename,submitted_at,storage_path").eq("student_id",studentId).order("submitted_at",{ascending:false});
+  if(error){msg("#subMsg",error.message);return;}
+  $("#submissionList").innerHTML=(data||[]).map(x=>`<div class="submission"><b>${esc(x.subject)}</b> — ${esc(x.title)}<br><small>${esc(x.original_filename)} • ${new Date(x.submitted_at).toLocaleString()}</small><br><button class="btn downloadWork" data-path="${esc(x.storage_path)}">Download</button></div>`).join("")||"<p>No submissions yet.</p>";
+  document.querySelectorAll(".downloadWork").forEach(b=>b.onclick=async()=>{
+    const {data,error}=await db.storage.from("student-work").createSignedUrl(b.dataset.path,300);
+    if(error)return alert(error.message);
+    window.open(data.signedUrl,"_blank");
+  });
+}
+
+$("#registerForm").onsubmit=async e=>{
+  e.preventDefault();
+  const f=Object.fromEntries(new FormData(e.target));
+  const username=usernameFromAdmno(f.admno);
+  const {data,error}=await db.auth.signUp({email:username,password:f.password,data:{full_name:f.name,admission_number:String(f.admno).trim()}});
+  if(error){msg("#regMsg",error.message);return;}
+  if(!data.user){msg("#regMsg","Registration started. Check your email to confirm the account.");return;}
+  const {error:profileError}=await db.from("students").insert({id:data.user.id,admission_number:String(f.admno).trim(),full_name:f.name,email:f.email||null,phone:f.phone||null,class_name:f.className||null});
+  if(profileError){msg("#regMsg",profileError.message);return;}
+  msg("#regMsg",`Account created. Username: ${username}`);
+  e.target.reset();
+};
+
+$("#loginForm").onsubmit=async e=>{
+  e.preventDefault();
+  const f=Object.fromEntries(new FormData(e.target));
+  const username=String(f.username).trim().toLowerCase();
+  const {data,error}=await db.auth.signInWithPassword({email:username,password:f.password});
+  if(error){msg("#loginMsg",error.message);return;}
+  msg("#loginMsg","Login successful.");
+  await loadStudent();
+};
+
+$("#submissionForm").onsubmit=async e=>{
+  e.preventDefault();
+  const {data:{user}}=await db.auth.getUser();
+  if(!user){msg("#subMsg","Please log in first.");return;}
+  const f=new FormData(e.target);
+  const file=f.get("work");
+  if(!file||!file.name){msg("#subMsg","Select a file.");return;}
+  const safe=file.name.replace(/[^a-zA-Z0-9._-]/g,"_");
+  const path=`${user.id}/${Date.now()}-${safe}`;
+  const up=await db.storage.from("student-work").upload(path,file,{upsert:false});
+  if(up.error){msg("#subMsg",up.error.message);return;}
+  const ins=await db.from("submissions").insert({student_id:user.id,subject:f.get("subject"),title:f.get("title"),original_filename:file.name,storage_path:path});
+  if(ins.error){await db.storage.from("student-work").remove([path]);msg("#subMsg",ins.error.message);return;}
+  msg("#subMsg","Work submitted successfully.");
+  e.target.reset();
+  await loadSubs(user.id);
+};
+
+$("#logout").onclick=async()=>{await db.auth.signOut();location.reload();};
+
+$("#teacherLoginForm").onsubmit=e=>{e.preventDefault();msg("#teacherLoginMsg","Teacher administration remains on the secure server portal and will be connected in the hosting step.");};
+
+news();
+loadStudent();
