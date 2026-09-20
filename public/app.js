@@ -39,12 +39,10 @@ $("#registerForm").onsubmit=async e=>{
   e.preventDefault();
   const f=Object.fromEntries(new FormData(e.target));
   const username=usernameFromAdmno(f.admno);
-  const {data,error}=await db.auth.signUp({email:username,password:f.password,data:{full_name:f.name,admission_number:String(f.admno).trim()}});
+  const {data,error}=await db.auth.signUp({email:username,password:f.password,data:{full_name:f.name,admission_number:String(f.admno).trim(),contact_email:f.email||null,phone:f.phone||null,class_name:f.className||null}});
   if(error){msg("#regMsg",error.message);return;}
   if(!data.user){msg("#regMsg","Registration started. Check your email to confirm the account.");return;}
-  const {error:profileError}=await db.from("students").insert({id:data.user.id,admission_number:String(f.admno).trim(),full_name:f.name,email:f.email||null,phone:f.phone||null,class_name:f.className||null});
-  if(profileError){msg("#regMsg",profileError.message);return;}
-  msg("#regMsg",`Account created. Username: ${username}`);
+  msg("#regMsg",data.session ? `Account created. Username: ${username}` : `Account created. Username: ${username}. Check the registered email for the confirmation link before logging in.`);
   e.target.reset();
 };
 
